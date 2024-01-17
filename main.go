@@ -1,12 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	"io/fs"
 	"net/http"
 	"os"
-
-	"github.com/go-chi/chi/v5"
 )
 
 type apiConfig struct {
@@ -45,6 +45,44 @@ func (cfg *apiConfig) metricHandler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(fmt.Sprintf(string(page), cfg.fileserverHits)))
 }
 
+func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	type errorVals struct {
+		Body string `json:"error"`
+	}
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: "something went wrong",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+	if len(params.Body) > 140 {
+		w.WriteHeader(400)
+		respBody := errorVals{
+			Body: "chirp too long",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	type returnVals struct {
+		Body bool `json:"valid"`
+	}
+	dat, _ := json.Marshal(returnVals{Body: true})
+	w.WriteHeader(200)
+	w.Write(dat)
+}
+
 func healthHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(200)
 	w.Header().Add("Content-Type:", "text/plain; charset=utf-8")
@@ -62,6 +100,7 @@ func main() {
 	r.Handle("/app/*", cfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
 
 	api.Get("/healthz", healthHandler)
+	api.Post("/validate_chirp", validateChirpHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
