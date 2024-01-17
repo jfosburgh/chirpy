@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"slices"
+	"strings"
 )
 
 type apiConfig struct {
@@ -45,6 +47,22 @@ func (cfg *apiConfig) metricHandler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(fmt.Sprintf(string(page), cfg.fileserverHits)))
 }
 
+func cleanText(text string) string {
+	words := strings.Split(text, " ")
+	cleanedWords := make([]string, 0)
+
+	for _, word := range words {
+		if slices.Contains([]string{"kerfuffle", "sharbert", "fornax"}, strings.ToLower(word)) {
+			cleanedWords = append(cleanedWords, "****")
+		} else {
+			cleanedWords = append(cleanedWords, word)
+		}
+	}
+
+	cleanedText := strings.Join(cleanedWords, " ")
+	return cleanedText
+}
+
 func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
@@ -76,9 +94,10 @@ func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	type returnVals struct {
-		Body bool `json:"valid"`
+		Body string `json:"cleaned_body"`
 	}
-	dat, _ := json.Marshal(returnVals{Body: true})
+	cleanedBody := cleanText(params.Body)
+	dat, _ := json.Marshal(returnVals{Body: cleanedBody})
 	w.WriteHeader(200)
 	w.Write(dat)
 }
