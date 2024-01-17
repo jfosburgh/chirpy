@@ -1,4 +1,4 @@
-module jfosburgh/chirpy
+module chirpy
 
 go 1.21.6
 

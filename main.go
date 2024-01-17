@@ -1,18 +1,26 @@
 package main
 
 import (
+	"chirpy/internal/database"
 	"encoding/json"
 	"fmt"
-	"github.com/go-chi/chi/v5"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type apiConfig struct {
 	fileserverHits int
+	db             *database.DB
+}
+
+type errorVals struct {
+	Body string `json:"error"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -63,7 +71,7 @@ func cleanText(text string) string {
 	return cleanedText
 }
 
-func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
+func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
 	}
@@ -71,9 +79,6 @@ func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
-	type errorVals struct {
-		Body string `json:"error"`
-	}
 	if err != nil {
 		w.WriteHeader(500)
 		respBody := errorVals{
@@ -93,12 +98,38 @@ func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	type returnVals struct {
-		Body string `json:"cleaned_body"`
-	}
 	cleanedBody := cleanText(params.Body)
-	dat, _ := json.Marshal(returnVals{Body: cleanedBody})
+	chirp, err := cfg.db.CreateChirp(cleanedBody)
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: string(fmt.Sprint(err)),
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	dat, _ := json.Marshal(chirp)
+	w.WriteHeader(201)
+	w.Write(dat)
+}
+
+func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
+	chirps, err := cfg.db.GetChirps()
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: string(fmt.Sprint(err)),
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	dat, _ := json.Marshal(chirps)
 	w.WriteHeader(200)
+	w.Header().Add("Content-Type:", "application/json")
 	w.Write(dat)
 }
 
@@ -114,12 +145,18 @@ func main() {
 	admin := chi.NewRouter()
 	corsMux := middlewareCors(r)
 
-	cfg := apiConfig{0}
+	db, err := database.NewDB("/home/jfosburgh/workspace/github.com/jfosburgh/boot.dev/chirpy/db.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cfg := apiConfig{0, db}
 	r.Handle("/app", cfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	r.Handle("/app/*", cfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
 
 	api.Get("/healthz", healthHandler)
-	api.Post("/validate_chirp", validateChirpHandler)
+	api.Post("/chirps", cfg.createChirpHandler)
+	api.Get("/chirps", cfg.getChirpsHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
