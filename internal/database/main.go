@@ -3,12 +3,16 @@ package database
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+
 	// "fmt"
 	"io/fs"
 	"log"
 	"os"
 	"sort"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type DB struct {
@@ -27,8 +31,9 @@ type Chirp struct {
 }
 
 type User struct {
-	EMail string `json:"email"`
-	Id    int    `json:"id"`
+	EMail    string `json:"email"`
+	Password []byte `json:"password"`
+	Id       int    `json:"id"`
 }
 
 // NewDB creates a new database connection
@@ -61,14 +66,35 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 	return chirp, nil
 }
 
-func (db *DB) CreateUser(email string) (User, error) {
+func (db *DB) Login(email, password string) (User, error) {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+
+	for _, dbUser := range dbContent.Users {
+		if dbUser.EMail == email {
+			err = bcrypt.CompareHashAndPassword(dbUser.Password, []byte(password))
+			if err != nil {
+				return User{}, err
+			} else {
+				return dbUser, nil
+			}
+		}
+	}
+
+	return User{}, errors.New(fmt.Sprintf("No user found in db for email %s", email))
+}
+
+func (db *DB) CreateUser(email, password string) (User, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
 		return User{}, err
 	}
 
 	id := len(dbContent.Users) + 1
-	user := User{email, id}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 10)
+	user := User{email, hashedPassword, id}
 	if id == 1 {
 		dbContent.Users = map[int]User{}
 	}

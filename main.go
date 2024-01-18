@@ -73,11 +73,17 @@ func cleanText(text string) string {
 	return cleanedText
 }
 
-func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request) {
-	type parameters struct {
-		Email string `json:"email"`
-	}
+type parameters struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
 
+type userNoPassword struct {
+	Email string `json:"email"`
+	Id    int    `json:"id"`
+}
+
+func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
@@ -91,7 +97,44 @@ func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request
 		return
 	}
 
-	user, err := cfg.db.CreateUser(params.Email)
+	user, err := cfg.db.Login(params.Email, params.Password)
+
+	if err != nil {
+		w.WriteHeader(401)
+		respBody := errorVals{
+			Body: "Unauthorized",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	returnUser := userNoPassword{
+		Email: user.EMail,
+		Id:    user.Id,
+	}
+
+	dat, _ := json.Marshal(returnUser)
+	w.WriteHeader(200)
+	w.Write(dat)
+}
+
+func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request) {
+	decoder := json.NewDecoder(req.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: "something went wrong",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	user, err := cfg.db.CreateUser(params.Email, params.Password)
+
 	if err != nil {
 		w.WriteHeader(500)
 		respBody := errorVals{
@@ -102,7 +145,12 @@ func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request
 		return
 	}
 
-	dat, _ := json.Marshal(user)
+	returnUser := userNoPassword{
+		Email: user.EMail,
+		Id:    user.Id,
+	}
+
+	dat, _ := json.Marshal(returnUser)
 	w.WriteHeader(201)
 	w.Write(dat)
 }
@@ -226,6 +274,7 @@ func main() {
 	api.Get("/chirps", cfg.getChirpsHandler)
 	api.Get("/chirps/{id}", cfg.getChirpByIDHandler)
 	api.Post("/users", cfg.createUserHandler)
+	api.Post("/login", cfg.loginHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
