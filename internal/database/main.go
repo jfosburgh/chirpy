@@ -38,22 +38,19 @@ func NewDB(path string) (*DB, error) {
 func (db *DB) CreateChirp(body string) (Chirp, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
-		fmt.Printf("CreateChirp: %v\n", err)
 		return Chirp{}, err
 	}
 
 	id := len(dbContent.Chirps) + 1
 	chirp := Chirp{body, id}
 	if id == 1 {
-		dbContent.Chirps = map[int]Chirp{id: chirp}
+		dbContent.Chirps = map[int]Chirp{}
 	}
 	dbContent.Chirps[id] = chirp
 	err = db.writeDB(dbContent)
 	if err != nil {
-		fmt.Printf("CreateChirp: %v\n", err)
 		return Chirp{}, err
 	}
-	fmt.Printf("created chirp: %v\n", chirp)
 
 	return chirp, nil
 }
@@ -62,7 +59,6 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 func (db *DB) GetChirps() ([]Chirp, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
-		fmt.Printf("GetChirps: %v\n", err)
 		return make([]Chirp, 0), err
 	}
 
@@ -72,20 +68,31 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 	}
 
 	sort.Slice(chirps, func(i, j int) bool { return chirps[i].Id < chirps[j].Id })
-	fmt.Println("sorted chirps returned")
 	return chirps, nil
+}
+
+func (db *DB) GetChirpByID(id int) (Chirp, error) {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return Chirp{"", -2}, err
+	}
+
+	chirp, ok := dbContent.Chirps[id]
+	if !ok {
+		return Chirp{"", -1}, nil
+	}
+
+	return chirp, nil
 }
 
 // ensureDB creates a new database file if it doesn't exist
 func (db *DB) ensureDB() error {
 	_, err := db.loadDB()
 	if err != nil {
-		fmt.Printf("ensureDB: %v\n", err)
 		if errors.Is(err, fs.ErrNotExist) {
 			data, _ := json.Marshal(DBStructure{make(map[int]Chirp)})
 			err = os.WriteFile(db.path, data, 0666)
 			if err != nil {
-				fmt.Printf("ensureDB: %v\n", err)
 				log.Fatal(err)
 			}
 		} else {
@@ -98,17 +105,14 @@ func (db *DB) ensureDB() error {
 
 // loadDB reads the database file into memory
 func (db *DB) loadDB() (DBStructure, error) {
-	fmt.Printf("loading db from %s\n", db.path)
 	data, err := os.ReadFile(db.path)
 	if err != nil {
-		fmt.Printf("loadDB: %v\n", err)
 		return DBStructure{}, err
 	}
 
 	dbContent := DBStructure{}
 	err = json.Unmarshal(data, &dbContent)
 
-	fmt.Println("db loaded")
 	return dbContent, nil
 }
 
@@ -116,16 +120,13 @@ func (db *DB) loadDB() (DBStructure, error) {
 func (db *DB) writeDB(dbStructure DBStructure) error {
 	data, err := json.Marshal(dbStructure)
 	if err != nil {
-		fmt.Printf("writeDB: %v\n", err)
 		return err
 	}
 
 	err = os.WriteFile(db.path, data, 0666)
 	if err != nil {
-		fmt.Printf("writeDB: %v\n", err)
 		return err
 	}
-	fmt.Println("database written")
 
 	return nil
 }

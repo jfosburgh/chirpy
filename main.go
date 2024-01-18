@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -133,6 +134,29 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request)
 	w.Write(dat)
 }
 
+func (cfg *apiConfig) getChirpByIDHandler(w http.ResponseWriter, req *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(req, "id"))
+	chirp, err := cfg.db.GetChirpByID(id)
+	if err != nil || chirp.Id == -1 {
+		if err == nil {
+			w.WriteHeader(404)
+		} else {
+			w.WriteHeader(500)
+		}
+		respBody := errorVals{
+			Body: string(fmt.Sprint(err)),
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	dat, _ := json.Marshal(chirp)
+	w.WriteHeader(200)
+	w.Header().Add("Content-Type:", "application/json")
+	w.Write(dat)
+}
+
 func healthHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(200)
 	w.Header().Add("Content-Type:", "text/plain; charset=utf-8")
@@ -157,6 +181,7 @@ func main() {
 	api.Get("/healthz", healthHandler)
 	api.Post("/chirps", cfg.createChirpHandler)
 	api.Get("/chirps", cfg.getChirpsHandler)
+	api.Get("/chirps/{id}", cfg.getChirpByIDHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
