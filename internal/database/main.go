@@ -3,7 +3,7 @@ package database
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	// "fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -18,11 +18,17 @@ type DB struct {
 
 type DBStructure struct {
 	Chirps map[int]Chirp `json:"chirps"`
+	Users  map[int]User  `json:"users"`
 }
 
 type Chirp struct {
 	Body string `json:"body"`
 	Id   int    `json:"id"`
+}
+
+type User struct {
+	EMail string `json:"email"`
+	Id    int    `json:"id"`
 }
 
 // NewDB creates a new database connection
@@ -53,6 +59,26 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 	}
 
 	return chirp, nil
+}
+
+func (db *DB) CreateUser(email string) (User, error) {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+
+	id := len(dbContent.Users) + 1
+	user := User{email, id}
+	if id == 1 {
+		dbContent.Users = map[int]User{}
+	}
+	dbContent.Users[id] = user
+	err = db.writeDB(dbContent)
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
 }
 
 // GetChirps returns all chirps in the database
@@ -90,7 +116,7 @@ func (db *DB) ensureDB() error {
 	_, err := db.loadDB()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			data, _ := json.Marshal(DBStructure{make(map[int]Chirp)})
+			data, _ := json.Marshal(DBStructure{make(map[int]Chirp), make(map[int]User)})
 			err = os.WriteFile(db.path, data, 0666)
 			if err != nil {
 				log.Fatal(err)

@@ -3,6 +3,7 @@ package main
 import (
 	"chirpy/internal/database"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -70,6 +71,40 @@ func cleanText(text string) string {
 
 	cleanedText := strings.Join(cleanedWords, " ")
 	return cleanedText
+}
+
+func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: "something went wrong",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	user, err := cfg.db.CreateUser(params.Email)
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: string(fmt.Sprint(err)),
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	dat, _ := json.Marshal(user)
+	w.WriteHeader(201)
+	w.Write(dat)
 }
 
 func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
@@ -169,7 +204,15 @@ func main() {
 	admin := chi.NewRouter()
 	corsMux := middlewareCors(r)
 
-	db, err := database.NewDB("/home/jfosburgh/workspace/github.com/jfosburgh/boot.dev/chirpy/db.json")
+	dbg := flag.Bool("debug", false, "Enable debug mode")
+	flag.Parse()
+
+	dbf := "/home/jfosburgh/workspace/github.com/jfosburgh/boot.dev/chirpy/db.json"
+	if *dbg {
+		os.Remove(dbf)
+	}
+
+	db, err := database.NewDB(dbf)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,6 +225,7 @@ func main() {
 	api.Post("/chirps", cfg.createChirpHandler)
 	api.Get("/chirps", cfg.getChirpsHandler)
 	api.Get("/chirps/{id}", cfg.getChirpByIDHandler)
+	api.Post("/users", cfg.createUserHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
