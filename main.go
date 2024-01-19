@@ -318,6 +318,12 @@ func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request
 }
 
 func (cfg *apiConfig) upgradeToRedHandler(w http.ResponseWriter, req *http.Request) {
+	apiKey, ok := strings.CutPrefix(req.Header.Get("Authorization"), "ApiKey ")
+	if !ok || apiKey != os.Getenv("POLKA_API_KEY") {
+		w.WriteHeader(401)
+		return
+	}
+
 	type webhookbody struct {
 		Event string `json:"event"`
 		Data  struct {
