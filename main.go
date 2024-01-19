@@ -402,11 +402,12 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
 	param := req.URL.Query().Get("author_id")
+	sortDir := req.URL.Query().Get("sort")
 	author_id := 0
 	if param != "" {
 		author_id, _ = strconv.Atoi(param)
 	}
-	chirps, err := cfg.db.GetChirps(author_id)
+	chirps, err := cfg.db.GetChirps(author_id, sortDir)
 	if err != nil {
 		w.WriteHeader(500)
 		respBody := errorVals{
