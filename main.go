@@ -383,6 +383,24 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request)
 	w.Write(dat)
 }
 
+func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, req *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(req, "id"))
+	jwtToken, err := cfg.parseJWT(w, req, "chirpy-access")
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	strId, err := jwtToken.Claims.GetSubject()
+	author_id, err := strconv.Atoi(strId)
+
+	ok := cfg.db.DeleteChirp(id, author_id)
+	if !ok {
+		w.WriteHeader(403)
+		return
+	}
+	return
+}
+
 func (cfg *apiConfig) getChirpByIDHandler(w http.ResponseWriter, req *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(req, "id"))
 	chirp, err := cfg.db.GetChirpByID(id)
@@ -444,6 +462,7 @@ func main() {
 	api.Post("/chirps", cfg.createChirpHandler)
 	api.Get("/chirps", cfg.getChirpsHandler)
 	api.Get("/chirps/{id}", cfg.getChirpByIDHandler)
+	api.Delete("/chirps/{id}", cfg.deleteChirpHandler)
 	api.Post("/users", cfg.createUserHandler)
 	api.Post("/login", cfg.loginHandler)
 	api.Put("/users", cfg.updateUserHandler)

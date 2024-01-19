@@ -160,6 +160,26 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 	return chirps, nil
 }
 
+func (db *DB) DeleteChirp(id, author_id int) bool {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return true
+	}
+
+	chirp, ok := dbContent.Chirps[id]
+	if !ok {
+		return true
+	}
+
+	if chirp.AuthorId != author_id {
+		return false
+	}
+
+	delete(dbContent.Chirps, id)
+	db.writeDB(dbContent)
+	return true
+}
+
 func (db *DB) GetChirpByID(id int) (Chirp, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
