@@ -25,3 +25,6 @@ go.work
 
 # binary
 out
+
+# env file 
+.env

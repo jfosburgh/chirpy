@@ -12,13 +12,17 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 )
 
 type apiConfig struct {
 	fileserverHits int
 	db             *database.DB
+	jwtSecret      string
 }
 
 type errorVals struct {
@@ -73,9 +77,10 @@ func cleanText(text string) string {
 	return cleanedText
 }
 
-type parameters struct {
+type userparameters struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Expires  int    `json:"expires_in_seconds"`
 }
 
 type userNoPassword struct {
@@ -83,9 +88,15 @@ type userNoPassword struct {
 	Id    int    `json:"id"`
 }
 
+type userWithToken struct {
+	Email string `json:"email"`
+	Id    int    `json:"id"`
+	Token string `json:"token"`
+}
+
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
-	params := parameters{}
+	params := userparameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		w.WriteHeader(500)
@@ -109,9 +120,18 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	returnUser := userNoPassword{
+	if params.Expires == 0 {
+		params.Expires = 30 * 60
+	}
+	now := time.Now().UTC()
+	expireTime := now.Add(time.Millisecond * 1000 * time.Duration(params.Expires))
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwt.RegisteredClaims{Issuer: "chirpy", IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expireTime), Subject: fmt.Sprint(user.Id)})
+	signedToken, err := token.SignedString([]byte(cfg.jwtSecret))
+
+	returnUser := userWithToken{
 		Email: user.EMail,
 		Id:    user.Id,
+		Token: signedToken,
 	}
 
 	dat, _ := json.Marshal(returnUser)
@@ -119,9 +139,69 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	w.Write(dat)
 }
 
+func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request) {
+	token, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		w.WriteHeader(401)
+		respBody := errorVals{
+			Body: "authorization token required",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+	tokenPtr, err := jwt.ParseWithClaims(token, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(cfg.jwtSecret), nil
+	})
+	if err != nil {
+		w.WriteHeader(401)
+		respBody := errorVals{
+			Body: "Unauthorized",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	idString, _ := tokenPtr.Claims.GetSubject()
+	id, _ := strconv.Atoi(idString)
+
+	decoder := json.NewDecoder(req.Body)
+	params := userparameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: "something went wrong",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	user, err := cfg.db.UpdateUser(id, params.Email, params.Password)
+	if err != nil {
+		w.WriteHeader(500)
+		respBody := errorVals{
+			Body: "something went wrong",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	type returnuser struct {
+		Email string `json:"email"`
+		Id    int    `json:"id"`
+	}
+	returnUser := returnuser{user.EMail, user.Id}
+	dat, _ := json.Marshal(returnUser)
+	w.Write(dat)
+}
+
 func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
-	params := parameters{}
+	params := userparameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		w.WriteHeader(500)
@@ -247,6 +327,11 @@ func healthHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("error loading .env")
+	}
+	jwtSecret := os.Getenv("JWT_SECRET")
 	r := chi.NewRouter()
 	api := chi.NewRouter()
 	admin := chi.NewRouter()
@@ -265,7 +350,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cfg := apiConfig{0, db}
+	cfg := apiConfig{0, db, jwtSecret}
 	r.Handle("/app", cfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	r.Handle("/app/*", cfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
 
@@ -275,6 +360,7 @@ func main() {
 	api.Get("/chirps/{id}", cfg.getChirpByIDHandler)
 	api.Post("/users", cfg.createUserHandler)
 	api.Post("/login", cfg.loginHandler)
+	api.Put("/users", cfg.updateUserHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)

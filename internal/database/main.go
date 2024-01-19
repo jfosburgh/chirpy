@@ -107,6 +107,24 @@ func (db *DB) CreateUser(email, password string) (User, error) {
 	return user, nil
 }
 
+func (db *DB) UpdateUser(id int, email, password string) (User, error) {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+	user, ok := dbContent.Users[id]
+	if !ok {
+		return User{}, errors.New("ID not found")
+	}
+	user.EMail = email
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 10)
+	user.Password = hashedPassword
+	dbContent.Users[id] = user
+	db.writeDB(dbContent)
+
+	return user, nil
+}
+
 // GetChirps returns all chirps in the database
 func (db *DB) GetChirps() ([]Chirp, error) {
 	dbContent, err := db.loadDB()
