@@ -401,7 +401,12 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 }
 
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
-	chirps, err := cfg.db.GetChirps()
+	param := req.URL.Query().Get("author_id")
+	author_id := 0
+	if param != "" {
+		author_id, _ = strconv.Atoi(param)
+	}
+	chirps, err := cfg.db.GetChirps(author_id)
 	if err != nil {
 		w.WriteHeader(500)
 		respBody := errorVals{

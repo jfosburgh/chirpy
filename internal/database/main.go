@@ -162,7 +162,7 @@ func (db *DB) UpdateUserRedStatus(id int, red bool) error {
 }
 
 // GetChirps returns all chirps in the database
-func (db *DB) GetChirps() ([]Chirp, error) {
+func (db *DB) GetChirps(author_id int) ([]Chirp, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
 		return make([]Chirp, 0), err
@@ -170,7 +170,9 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 
 	chirps := []Chirp{}
 	for _, chirp := range dbContent.Chirps {
-		chirps = append(chirps, chirp)
+		if author_id == 0 || author_id == chirp.AuthorId {
+			chirps = append(chirps, chirp)
+		}
 	}
 
 	sort.Slice(chirps, func(i, j int) bool { return chirps[i].Id < chirps[j].Id })
