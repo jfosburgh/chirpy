@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,13 +22,15 @@ type DB struct {
 }
 
 type DBStructure struct {
-	Chirps map[int]Chirp `json:"chirps"`
-	Users  map[int]User  `json:"users"`
+	Chirps        map[int]Chirp        `json:"chirps"`
+	Users         map[int]User         `json:"users"`
+	RevokedTokens map[string]time.Time `json:"revoked_at"`
 }
 
 type Chirp struct {
-	Body string `json:"body"`
-	Id   int    `json:"id"`
+	Body     string `json:"body"`
+	Id       int    `json:"id"`
+	AuthorId int    `json:"author_id"`
 }
 
 type User struct {
@@ -46,14 +49,14 @@ func NewDB(path string) (*DB, error) {
 }
 
 // CreateChirp creates a new chirp and saves it to disk
-func (db *DB) CreateChirp(body string) (Chirp, error) {
+func (db *DB) CreateChirp(body string, author_id int) (Chirp, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
 		return Chirp{}, err
 	}
 
 	id := len(dbContent.Chirps) + 1
-	chirp := Chirp{body, id}
+	chirp := Chirp{body, id, author_id}
 	if id == 1 {
 		dbContent.Chirps = map[int]Chirp{}
 	}
@@ -84,6 +87,22 @@ func (db *DB) Login(email, password string) (User, error) {
 	}
 
 	return User{}, errors.New(fmt.Sprintf("No user found in db for email %s", email))
+}
+
+func (db *DB) TokenIsRevoked(token string) bool {
+	dbContent, _ := db.loadDB()
+	_, revoked := dbContent.RevokedTokens[token]
+	return revoked
+}
+
+func (db *DB) RevokeToken(token string) error {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return err
+	}
+	dbContent.RevokedTokens[token] = time.Now()
+	db.writeDB(dbContent)
+	return nil
 }
 
 func (db *DB) CreateUser(email, password string) (User, error) {
@@ -144,12 +163,12 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 func (db *DB) GetChirpByID(id int) (Chirp, error) {
 	dbContent, err := db.loadDB()
 	if err != nil {
-		return Chirp{"", -2}, err
+		return Chirp{"", -2, -1}, err
 	}
 
 	chirp, ok := dbContent.Chirps[id]
 	if !ok {
-		return Chirp{"", -1}, nil
+		return Chirp{"", -1, -1}, nil
 	}
 
 	return chirp, nil
@@ -160,7 +179,7 @@ func (db *DB) ensureDB() error {
 	_, err := db.loadDB()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			data, _ := json.Marshal(DBStructure{make(map[int]Chirp), make(map[int]User)})
+			data, _ := json.Marshal(DBStructure{make(map[int]Chirp), make(map[int]User), make(map[string]time.Time)})
 			err = os.WriteFile(db.path, data, 0666)
 			if err != nil {
 				log.Fatal(err)

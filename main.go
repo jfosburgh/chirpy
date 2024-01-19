@@ -3,6 +3,7 @@ package main
 import (
 	"chirpy/internal/database"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -80,7 +81,6 @@ func cleanText(text string) string {
 type userparameters struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	Expires  int    `json:"expires_in_seconds"`
 }
 
 type userNoPassword struct {
@@ -89,9 +89,10 @@ type userNoPassword struct {
 }
 
 type userWithToken struct {
-	Email string `json:"email"`
-	Id    int    `json:"id"`
-	Token string `json:"token"`
+	Email        string `json:"email"`
+	Id           int    `json:"id"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
@@ -120,18 +121,19 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if params.Expires == 0 {
-		params.Expires = 30 * 60
-	}
 	now := time.Now().UTC()
-	expireTime := now.Add(time.Millisecond * 1000 * time.Duration(params.Expires))
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwt.RegisteredClaims{Issuer: "chirpy", IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expireTime), Subject: fmt.Sprint(user.Id)})
-	signedToken, err := token.SignedString([]byte(cfg.jwtSecret))
+	expireAccess := now.Add(time.Millisecond * 1000 * 60 * 60)
+	expireRefresh := now.Add(time.Millisecond * 1000 * 60 * 60 * 24)
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwt.RegisteredClaims{Issuer: "chirpy-access", IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expireAccess), Subject: fmt.Sprint(user.Id)})
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwt.RegisteredClaims{Issuer: "chirpy-refresh", IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expireRefresh), Subject: fmt.Sprint(user.Id)})
+	signedAccessToken, err := accessToken.SignedString([]byte(cfg.jwtSecret))
+	signedRefreshToken, err := refreshToken.SignedString([]byte(cfg.jwtSecret))
 
 	returnUser := userWithToken{
-		Email: user.EMail,
-		Id:    user.Id,
-		Token: signedToken,
+		Email:        user.EMail,
+		Id:           user.Id,
+		Token:        signedAccessToken,
+		RefreshToken: signedRefreshToken,
 	}
 
 	dat, _ := json.Marshal(returnUser)
@@ -139,7 +141,22 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	w.Write(dat)
 }
 
-func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request) {
+func (cfg *apiConfig) revokeTokenHandler(w http.ResponseWriter, req *http.Request) {
+	token, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		w.WriteHeader(401)
+		respBody := errorVals{
+			Body: "authorization token required",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return
+	}
+
+	cfg.db.RevokeToken(token)
+}
+
+func (cfg *apiConfig) refreshTokenHandler(w http.ResponseWriter, req *http.Request) {
 	token, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
 	if !ok {
 		w.WriteHeader(401)
@@ -160,6 +177,67 @@ func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request
 		}
 		dat, _ := json.Marshal(respBody)
 		w.Write(dat)
+		return
+	}
+
+	if issuer, _ := tokenPtr.Claims.GetIssuer(); issuer != "chirpy-refresh" {
+		w.WriteHeader(401)
+		return
+	}
+	id, _ := tokenPtr.Claims.GetSubject()
+
+	if cfg.db.TokenIsRevoked(token) {
+		w.WriteHeader(401)
+		return
+	}
+
+	now := time.Now()
+	expireAccess := now.Add(time.Millisecond * 1000 * 60 * 60)
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwt.RegisteredClaims{Issuer: "chirpy-access", IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expireAccess), Subject: fmt.Sprint(id)})
+	signedAccessToken, err := accessToken.SignedString([]byte(cfg.jwtSecret))
+
+	type accesstoken struct {
+		Token string `json:"token"`
+	}
+	dat, _ := json.Marshal(accesstoken{signedAccessToken})
+	w.Write(dat)
+}
+
+func (cfg *apiConfig) parseJWT(w http.ResponseWriter, req *http.Request, issuer string) (*jwt.Token, error) {
+	token, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		w.WriteHeader(401)
+		respBody := errorVals{
+			Body: "authorization token required",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return &jwt.Token{}, errors.New("No auth token")
+	}
+	tokenPtr, err := jwt.ParseWithClaims(token, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(cfg.jwtSecret), nil
+	})
+	if err != nil {
+		w.WriteHeader(401)
+		respBody := errorVals{
+			Body: "Unauthorized",
+		}
+		dat, _ := json.Marshal(respBody)
+		w.Write(dat)
+		return &jwt.Token{}, err
+	}
+
+	if issuer, _ := tokenPtr.Claims.GetIssuer(); issuer != issuer {
+		w.WriteHeader(401)
+		return &jwt.Token{}, errors.New("Incorrect issuer")
+	}
+
+	return tokenPtr, nil
+}
+
+func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request) {
+	tokenPtr, err := cfg.parseJWT(w, req, "chirpy-access")
+	if err != nil {
 		return
 	}
 
@@ -236,13 +314,21 @@ func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request
 }
 
 func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
+	jwtToken, err := cfg.parseJWT(w, req, "chirpy-access")
+	if err != nil {
+		return
+	}
+
+	strId, _ := jwtToken.Claims.GetSubject()
+	id, _ := strconv.Atoi(strId)
+
 	type parameters struct {
 		Body string `json:"body"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		w.WriteHeader(500)
 		respBody := errorVals{
@@ -263,7 +349,7 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 	}
 
 	cleanedBody := cleanText(params.Body)
-	chirp, err := cfg.db.CreateChirp(cleanedBody)
+	chirp, err := cfg.db.CreateChirp(cleanedBody, id)
 	if err != nil {
 		w.WriteHeader(500)
 		respBody := errorVals{
@@ -361,6 +447,8 @@ func main() {
 	api.Post("/users", cfg.createUserHandler)
 	api.Post("/login", cfg.loginHandler)
 	api.Put("/users", cfg.updateUserHandler)
+	api.Post("/refresh", cfg.refreshTokenHandler)
+	api.Post("/revoke", cfg.revokeTokenHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
