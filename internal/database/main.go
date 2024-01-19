@@ -37,6 +37,7 @@ type User struct {
 	EMail    string `json:"email"`
 	Password []byte `json:"password"`
 	Id       int    `json:"id"`
+	IsRed    bool   `json:"is_chirpy_red"`
 }
 
 // NewDB creates a new database connection
@@ -113,7 +114,7 @@ func (db *DB) CreateUser(email, password string) (User, error) {
 
 	id := len(dbContent.Users) + 1
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 10)
-	user := User{email, hashedPassword, id}
+	user := User{email, hashedPassword, id, false}
 	if id == 1 {
 		dbContent.Users = map[int]User{}
 	}
@@ -142,6 +143,22 @@ func (db *DB) UpdateUser(id int, email, password string) (User, error) {
 	db.writeDB(dbContent)
 
 	return user, nil
+}
+
+func (db *DB) UpdateUserRedStatus(id int, red bool) error {
+	dbContent, err := db.loadDB()
+	if err != nil {
+		return err
+	}
+	user, ok := dbContent.Users[id]
+	if !ok {
+		return errors.New("ID not found")
+	}
+	user.IsRed = red
+	dbContent.Users[id] = user
+	db.writeDB(dbContent)
+
+	return nil
 }
 
 // GetChirps returns all chirps in the database

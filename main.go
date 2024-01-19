@@ -86,6 +86,7 @@ type userparameters struct {
 type userNoPassword struct {
 	Email string `json:"email"`
 	Id    int    `json:"id"`
+	IsRed bool   `json:"is_chirpy_red"`
 }
 
 type userWithToken struct {
@@ -93,6 +94,7 @@ type userWithToken struct {
 	Id           int    `json:"id"`
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
+	IsRed        bool   `json:"is_chirpy_red"`
 }
 
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
@@ -134,6 +136,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 		Id:           user.Id,
 		Token:        signedAccessToken,
 		RefreshToken: signedRefreshToken,
+		IsRed:        user.IsRed,
 	}
 
 	dat, _ := json.Marshal(returnUser)
@@ -306,11 +309,37 @@ func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request
 	returnUser := userNoPassword{
 		Email: user.EMail,
 		Id:    user.Id,
+		IsRed: user.IsRed,
 	}
 
 	dat, _ := json.Marshal(returnUser)
 	w.WriteHeader(201)
 	w.Write(dat)
+}
+
+func (cfg *apiConfig) upgradeToRedHandler(w http.ResponseWriter, req *http.Request) {
+	type webhookbody struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID int `json:"user_id"`
+		} `json:"data"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	webhook := webhookbody{}
+	err := decoder.Decode(&webhook)
+	if err != nil || webhook.Event != "user.upgraded" {
+		w.WriteHeader(200)
+		return
+	}
+
+	err = cfg.db.UpdateUserRedStatus(webhook.Data.UserID, true)
+	if err != nil {
+		w.WriteHeader(404)
+		return
+	}
+
+	w.WriteHeader(200)
 }
 
 func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
@@ -468,6 +497,7 @@ func main() {
 	api.Put("/users", cfg.updateUserHandler)
 	api.Post("/refresh", cfg.refreshTokenHandler)
 	api.Post("/revoke", cfg.revokeTokenHandler)
+	api.Post("/polka/webhooks", cfg.upgradeToRedHandler)
 	admin.Get("/metrics", cfg.metricHandler)
 	api.HandleFunc("/reset", cfg.metricResetHandler)
 	r.Mount("/api", api)
